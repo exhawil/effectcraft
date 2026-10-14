@@ -9,6 +9,7 @@ use effectcraft_engine::Session;
 use crate::{api, audio, browse, diskcache, files, frames, persist, storage, worker};
 use effectcraft_ui_egui::EffectcraftApp;
 use serde_json::json;
+use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(module = "/js/host.js")]
@@ -191,6 +192,9 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
     // Browser storage: settings, recent projects, imported media, saved projects, auto-saves and
     // the last session come back.
     let t0 = js_sys::Date::now();
+    let korean_font = fetch_core_font("/__fw3/fonts/korean.ttf").await;
+    let cjk_font = fetch_core_font("/__fw3/fonts/cjk.ttf").await;
+    effectcraft_ui_egui::theme::set_web_fonts(korean_font, cjk_font);
     let stored = match persist::load(&query_value("storage").unwrap_or_default()).await {
         Ok(n) => n,
         Err(e) => {
@@ -271,4 +275,17 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
         el.remove();
     }
     Ok(())
+}
+
+/// Fetch shared CJK fallback faces from the same-origin FW3 Core runtime.
+async fn fetch_core_font(path: &str) -> Vec<u8> {
+    let Some(window) = web_sys::window() else { return Vec::new() };
+    let Ok(value) = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(path)).await else { return Vec::new() };
+    let Ok(response) = value.dyn_into::<web_sys::Response>() else { return Vec::new() };
+    if !response.ok() {
+        return Vec::new();
+    }
+    let Ok(buffer) = response.array_buffer() else { return Vec::new() };
+    let Ok(buffer) = wasm_bindgen_futures::JsFuture::from(buffer).await else { return Vec::new() };
+    js_sys::Uint8Array::new(&buffer).to_vec()
 }

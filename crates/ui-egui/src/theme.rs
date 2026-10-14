@@ -6,8 +6,24 @@
 
 use std::sync::Arc;
 
+#[cfg(target_arch = "wasm32")]
+use std::cell::RefCell;
+
 use egui::{Color32, FontData, FontDefinitions, FontFamily, FontId, Stroke, TextStyle, Visuals};
 use serde::{Deserialize, Serialize};
+
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static WEB_FONTS: RefCell<(Option<Arc<FontData>>, Option<Arc<FontData>>)> = const { RefCell::new((None, None)) };
+}
+
+/// Register shared fonts fetched from the FW3 Core host before the first browser frame.
+#[cfg(target_arch = "wasm32")]
+pub fn set_web_fonts(korean: Vec<u8>, cjk: Vec<u8>) {
+    let korean = (!korean.is_empty()).then(|| Arc::new(FontData::from_owned(korean)));
+    let cjk = (!cjk.is_empty()).then(|| Arc::new(FontData::from_owned(cjk)));
+    WEB_FONTS.with(|fonts| *fonts.borrow_mut() = (korean, cjk));
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThemeKind {
@@ -388,8 +404,18 @@ const SCRIPT_PROBES: &[(char, &str)] = &[
 fn install_script_fallbacks(family_fonts: &mut FontDefinitions, language: &str) -> Vec<String> {
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = (family_fonts, language);
-        Vec::new()
+        let (korean, cjk) = WEB_FONTS.with(|fonts| fonts.borrow().clone());
+        let ordered = if language.starts_with("zh") { [("fw3-cjk", cjk), ("fw3-korean", korean)] } else { [("fw3-korean", korean), ("fw3-cjk", cjk)] };
+        let mut installed = Vec::new();
+        for (name, data) in ordered {
+            let Some(data) = data else { continue };
+            family_fonts.font_data.insert(name.to_owned(), data);
+            for family in family_fonts.families.values_mut() {
+                family.push(name.to_owned());
+            }
+            installed.push(name.to_owned());
+        }
+        installed
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
